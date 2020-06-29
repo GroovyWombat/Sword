@@ -9,306 +9,362 @@
 import Foundation
 import Dispatch
 
-#if !os(Linux)
-import Starscream
-#else
-import WebSockets
-#endif
+//#if !os(Linux)
+//import Starscream
+//#else
+//import WebSockets
+//#endif
+import HTTPKit
 
 /// WS class
 class Shard: Gateway {
 
-  // MARK: Properties
+	// MARK: Properties
 
-  /// Gateway URL for gateway
-  var gatewayUrl = ""
+	var eventLoopGroup: EventLoopGroup
 
-  /// Global Event Rate Limiter
-  let globalBucket: Bucket
+	/// Gateway URL for gateway
+	var gatewayUrl = ""
 
-  /// Heartbeat to send
-  var heartbeatPayload: Payload {
-    return Payload(op: .heartbeat, data: self.lastSeq ?? NSNull())
-  }
-  
-  /// The dispatch queue to handle sending heartbeats
-  let heartbeatQueue: DispatchQueue!
-  
-  /// ID of shard
-  let id: Int
+	/// Global Event Rate Limiter
+	let globalBucket: Bucket
 
-  /// Whether or not the shard is connected to gateway
-  var isConnected = false
+	/// Heartbeat to send
+	var heartbeatPayload: Payload {
+		return Payload(op: .heartbeat, data: self.lastSeq ?? NSNull())
+	}
 
-  /// The last sequence sent by Discord
-  var lastSeq: Int?
+	/// The dispatch queue to handle sending heartbeats
+	let heartbeatQueue: DispatchQueue!
 
-  /// Presence Event Rate Limiter
-  let presenceBucket: Bucket
+	/// ID of shard
+	let id: Int
 
-  /// Whether or not the shard is reconnecting
-  var isReconnecting = false
+	/// Whether or not the shard is connected to gateway
+	var isConnected = false
 
-  /// WS
-  var session: WebSocket?
+	/// The last sequence sent by Discord
+	var lastSeq: Int?
 
-  /// Session ID of gateway
-  var sessionId: String?
+	/// Presence Event Rate Limiter
+	let presenceBucket: Bucket
 
-  /// Amount of shards bot should be connected to
-  let shardCount: Int
+	/// Whether or not the shard is reconnecting
+	var isReconnecting = false
 
-  /// Parent class
-  unowned let sword: Sword
+	/// WS
+	var session: WebSocket?
 
-  /// Whether or not this shard was last acked
-  var wasAcked = true
-  
-  // MARK: Initializer
+	/// Session ID of gateway
+	var sessionId: String?
 
-  /**
-   Creates Shard Handler
+	/// Amount of shards bot should be connected to
+	let shardCount: Int
 
-   - parameter sword: Parent class
-   - parameter id: ID of the current shard
-   - parameter shardCount: Total number of shards bot needs to be connected to
-  */
-  init(_ sword: Sword, _ id: Int, _ shardCount: Int, _ gatewayUrl: String) {
-    self.sword = sword
-    self.id = id
-    self.shardCount = shardCount
-    self.gatewayUrl = gatewayUrl
+	/// Parent class
+	unowned let sword: Sword
 
-    self.heartbeatQueue = DispatchQueue(
-      label: "me.azoy.sword.shard.\(id).heartbeat",
-      qos: .userInitiated
-    )
-    
-    self.globalBucket = Bucket(
-      name: "me.azoy.sword.shard.\(id).global",
-      limit: 120,
-      interval: 60
-    )
+	/// Whether or not this shard was last acked
+	var wasAcked = true
 
-    self.presenceBucket = Bucket(
-      name: "me.azoy.sword.shard.\(id).presence",
-      limit: 5,
-      interval: 60
-    )
-  }
+	// MARK: Initializer
 
-  // MARK: Functions
+	/**
+	Creates Shard Handler
 
-  /**
-   Handles gateway events from WS connection with Discord
+	- parameter sword: Parent class
+	- parameter id: ID of the current shard
+	- parameter shardCount: Total number of shards bot needs to be connected to
+	*/
+	init(_ sword: Sword, _ id: Int, _ shardCount: Int, _ gatewayUrl: String, _ eventLoopGroup: EventLoopGroup) {
+		self.sword = sword
+		self.id = id
+		self.shardCount = shardCount
+		self.gatewayUrl = gatewayUrl
+		self.eventLoopGroup = eventLoopGroup
 
-   - parameter payload: Payload struct that Discord sent as JSON
-  */
-  func handlePayload(_ payload: Payload) {
-    if let sequenceNumber = payload.s {
-      self.lastSeq = sequenceNumber
-    }
+		self.heartbeatQueue = DispatchQueue(
+			label: "me.azoy.sword.shard.\(id).heartbeat",
+			qos: .userInitiated
+		)
 
-    guard payload.t != nil else {
-      self.handleGateway(payload)
-      return
-    }
+		self.globalBucket = Bucket(
+			name: "me.azoy.sword.shard.\(id).global",
+			limit: 120,
+			interval: 60
+		)
 
-    guard payload.d is [String: Any] else {
-      return
-    }
-    
-    self.handleEvent(payload.d as! [String: Any], payload.t!)
-    self.sword.emit(.payload, with: payload.encode())
-  }
-  
-  /**
-   Handles gateway disconnects
-   
-   - parameter code: Close code for the gateway closing
-  */
-  func handleDisconnect(for code: Int) {
-    self.isReconnecting = true
-    
-    self.sword.emit(.disconnect, with: self.id)
-    
-    guard let closeCode = CloseOP(rawValue: code) else {
-      self.sword.log("Connection closed with unrecognized response \(code).")
+		self.presenceBucket = Bucket(
+			name: "me.azoy.sword.shard.\(id).presence",
+			limit: 5,
+			interval: 60
+		)
+	}
 
-      self.reconnect()
+	// MARK: Functions
 
-      return
-    }
+	/**
+	Handles gateway events from WS connection with Discord
 
-    switch closeCode {
-      case .authenticationFailed:
-        print("[Sword] Invalid Bot Token")
+	- parameter payload: Payload struct that Discord sent as JSON
+	*/
+	func handlePayload(_ payload: Payload) {
+		if let sequenceNumber = payload.s {
+			self.lastSeq = sequenceNumber
+		}
 
-      case .invalidShard:
-        print("[Sword] Invalid Shard (We messed up here. Try again.)")
+		guard payload.t != nil else {
+			self.handleGateway(payload)
+			return
+		}
 
-      case .noInternet:
-        self.sword.globalQueue.asyncAfter(
-          deadline: DispatchTime.now() + .seconds(10)
-        ) { [unowned self] in
-          self.sword.warn("Detected a loss of internet...")
-          self.reconnect()
-        }
-      
-      case .shardingRequired:
-        print("[Sword] Sharding is required for this bot to run correctly.")
+		guard payload.d is [String: Any] else {
+			return
+		}
 
-      default:
-        self.reconnect()
-    }
-  }
+		self.handleEvent(payload.d as! [String: Any], payload.t!)
+		self.sword.emit(.payload, with: payload.encode())
+	}
 
-  /// Sends shard identity to WS connection
-  func identify() {
-    #if os(macOS)
-    let osName = "macOS"
-    #elseif os(Linux)
-    let osName = "Linux"
-    #elseif os(iOS)
-    let osName = "iOS"
-    #elseif os(watchOS)
-    let osName = "watchOS"
-    #elseif os(tvOS)
-    let osName = "tvOS"
-    #endif
+	/**
+	Handles gateway disconnects
 
-    var data: [String: Any] = [
-      "token": self.sword.token,
-      "properties": [
-        "$os": osName,
-        "$browser": "Sword",
-        "$device": "Sword"
-      ],
-      "compress": false,
-      "large_threshold": 250,
-      "shard": [
-        self.id, self.shardCount
-      ]
-    ]
-    
-    if let presence = self.sword.presence {
-      data["presence"] = presence
-    }
-    
-    let identity = Payload(
-      op: .identify,
-      data: data
-    ).encode()
+	- parameter code: Close code for the gateway closing
+	*/
+	func handleDisconnect(for code: Int) {
+		self.isReconnecting = true
 
-    self.send(identity)
-  }
+		self.sword.emit(.disconnect, with: self.id)
 
-  #if os(macOS) || os(Linux)
+		guard let closeCode = CloseOP(rawValue: code) else {
+			self.sword.log("Connection closed with unrecognized response \(code).")
 
-  /**
-   Sends a payload to socket telling it we want to join a voice channel
+			self.reconnect()
 
-   - parameter channelId: Channel to join
-   - parameter guildId: Guild that the channel belongs to
-  */
-  func joinVoiceChannel(_ channelId: Snowflake, in guildId: Snowflake) {
-    let payload = Payload(
-      op: .voiceStateUpdate,
-      data: [
-        "guild_id": guildId.description,
-        "channel_id": channelId.description,
-        "self_mute": false,
-        "self_deaf": false
-      ]
-    ).encode()
+			return
+		}
 
-    self.send(payload)
-  }
+		switch closeCode {
+		case .authenticationFailed:
+			print("[Sword] Invalid Bot Token")
 
-  /**
-   Sends a payload to socket telling it we want to leave a voice channel
+		case .invalidShard:
+			print("[Sword] Invalid Shard (We messed up here. Try again.)")
 
-   - parameter guildId: Guild we want to remove bot from
-  */
-  func leaveVoiceChannel(in guildId: Snowflake) {
-    let payload = Payload(
-      op: .voiceStateUpdate,
-      data: [
-        "guild_id": guildId.description,
-        "channel_id": NSNull(),
-        "self_mute": false,
-        "self_deaf": false
-      ]
-    ).encode()
+		case .noInternet:
+			self.sword.globalQueue.asyncAfter(
+				deadline: DispatchTime.now() + .seconds(10)
+			) { [unowned self] in
+				self.sword.warn("Detected a loss of internet...")
+				self.reconnect()
+			}
 
-    self.send(payload)
-  }
+		case .shardingRequired:
+			print("[Sword] Sharding is required for this bot to run correctly.")
 
-  #endif
+		default:
+			self.reconnect()
+		}
+	}
 
-  /// Used to reconnect to gateway
-  func reconnect() {
-    #if !os(Linux)
-    if let isOn = self.session?.isConnected, isOn {
-      self.session?.disconnect()
-    }
-    #else
-    if let isOn = self.session?.state, isOn == .open {
-        try? self.session?.close()
-    }
-    #endif
-    
-    self.isConnected = false
-    
-    self.sword.log("Disconnected from gateway... Resuming session")
-    
-    self.start()
-  }
+	/**
+	Handles gateway disconnects
 
-  /// Function to send packet to server to request for offline members for requested guild
-  func requestOfflineMembers(for guildId: Snowflake) {
-    let payload = Payload(
-      op: .requestGuildMember,
-      data: [
-        "guild_id": guildId.description,
-        "query": "",
-        "limit": 0
-      ]
-    ).encode()
+	- parameter code: Close code as WebSocketErrorCode for the gateway closing
+	*/
+	func handleDisconnect(with code: WebSocketErrorCode) {
+		self.isReconnecting = true
 
-    self.send(payload)
-  }
+		self.sword.emit(.disconnect, with: self.id)
 
-  /**
-   Sends a payload through WS connection
+		if code == .unexpectedServerError {
+			self.sword.log("Connection closed because of an unexpected server error \(code).")
 
-   - parameter text: JSON text to send through WS connection
-   - parameter presence: Whether or not this WS payload updates shard presence
-  */
-  func send(_ text: String, presence: Bool = false) {
-    let item = DispatchWorkItem { [unowned self] in
-      #if !os(Linux)
-      self.session?.write(string: text)
-      #else
-      try? self.session?.send(text)
-      #endif
-    }
+			self.reconnect()
 
-    presence ? self.presenceBucket.queue(item) : self.globalBucket.queue(item)
-  }
+			return
+		}
 
-  /// Used to stop WS connection
-  func stop() {
-    #if !os(Linux)
-    self.session?.disconnect()
-    #else
-    try? self.session?.close()
-    #endif
-    
-    self.isConnected = false
-    self.isReconnecting = false
+		switch code {
+		case .dataInconsistentWithMessage:
+			print("[WebSocketErrorCode] dataInconsistentWithMessage")
+		case .goingAway:
+			print("[WebSocketErrorCode] server going away")
+		case .messageTooLarge:
+			print("[WebSocketErrorCode] message too large")
+		case .missingExtension:
+			print("[WebSocketErrorCode] missing Extension")
 
-    self.sword.log("Stopping gateway connection...")
-  }
+		default:
+			if code == .unknown(UInt16(CloseOP.authenticationFailed.rawValue)) {
+				print("[WebSocketErrorCode] Invalid Bot Token")
+			}else if code == .unknown(UInt16(CloseOP.invalidShard.rawValue)) {
+				print("[Sword] Invalid Shard (We messed up here. Try again.)")
+			}else if code == .unknown(UInt16(CloseOP.noInternet.rawValue)) {
+				print("[Sword] no internet")
+				self.sword.globalQueue.asyncAfter(
+					deadline: DispatchTime.now() + .seconds(10)
+				) { [unowned self] in
+					self.sword.warn("Detected a loss of internet...")
+					self.reconnect()
+				}
+				return
+			}else if code == .unknown(UInt16(CloseOP.rateLimited.rawValue)) {
+				print("[Sword] rate limited")
+			}else if code == .unknown(UInt16(CloseOP.decodeError.rawValue)) {
+				print("[Sword] decode error")
+			}else if code == .unknown(UInt16(CloseOP.shardingRequired.rawValue)) {
+				print("[Sword] Sharding is required for this bot to run correctly.")
+			}
+		}
+	}
+
+	/// Sends shard identity to WS connection
+	func identify() {
+		#if os(macOS)
+		let osName = "macOS"
+		#elseif os(Linux)
+		let osName = "Linux"
+		#elseif os(iOS)
+		let osName = "iOS"
+		#elseif os(watchOS)
+		let osName = "watchOS"
+		#elseif os(tvOS)
+		let osName = "tvOS"
+		#endif
+
+		var data: [String: Any] = [
+			"token": self.sword.token,
+			"properties": [
+				"$os": osName,
+				"$browser": "Sword",
+				"$device": "Sword"
+			],
+			"compress": false,
+			"large_threshold": 250,
+			"shard": [
+				self.id, self.shardCount
+			]
+		]
+
+		if let presence = self.sword.presence {
+			data["presence"] = presence
+		}
+
+		let identity = Payload(
+			op: .identify,
+			data: data
+		).encode()
+
+		self.send(identity)
+	}
+
+	#if os(macOS) || os(Linux)
+
+	/**
+	Sends a payload to socket telling it we want to join a voice channel
+
+	- parameter channelId: Channel to join
+	- parameter guildId: Guild that the channel belongs to
+	*/
+	func joinVoiceChannel(_ channelId: Snowflake, in guildId: Snowflake) {
+		let payload = Payload(
+			op: .voiceStateUpdate,
+			data: [
+				"guild_id": guildId.description,
+				"channel_id": channelId.description,
+				"self_mute": false,
+				"self_deaf": false
+			]
+		).encode()
+
+		self.send(payload)
+	}
+
+	/**
+	Sends a payload to socket telling it we want to leave a voice channel
+
+	- parameter guildId: Guild we want to remove bot from
+	*/
+	func leaveVoiceChannel(in guildId: Snowflake) {
+		let payload = Payload(
+			op: .voiceStateUpdate,
+			data: [
+				"guild_id": guildId.description,
+				"channel_id": NSNull(),
+				"self_mute": false,
+				"self_deaf": false
+			]
+		).encode()
+
+		self.send(payload)
+	}
+
+	#endif
+
+	/// Used to reconnect to gateway
+	func reconnect() {
+		//    #if !os(Linux)
+		//    if let isOn = self.session?.isConnected, isOn {
+		//      self.session?.disconnect()
+		//    }
+		//    #else
+		if let isClosed = self.session?.isClosed, isClosed == false {
+			try? self.session?.close()
+		}
+		//    #endif
+
+		self.isConnected = false
+
+		self.sword.log("Disconnected from gateway... Resuming session")
+
+		self.start()
+	}
+
+	/// Function to send packet to server to request for offline members for requested guild
+	func requestOfflineMembers(for guildId: Snowflake) {
+		let payload = Payload(
+			op: .requestGuildMember,
+			data: [
+				"guild_id": guildId.description,
+				"query": "",
+				"limit": 0
+			]
+		).encode()
+
+		self.send(payload)
+	}
+
+	/**
+	Sends a payload through WS connection
+
+	- parameter text: JSON text to send through WS connection
+	- parameter presence: Whether or not this WS payload updates shard presence
+	*/
+	func send(_ text: String, presence: Bool = false) {
+		let item = DispatchWorkItem { [unowned self] in
+			//      #if !os(Linux)
+			//      self.session?.write(string: text)
+			//      #else
+			try? self.session?.send(text: text)
+			//      #endif
+		}
+
+		presence ? self.presenceBucket.queue(item) : self.globalBucket.queue(item)
+	}
+
+	/// Used to stop WS connection
+	func stop() {
+		//    #if !os(Linux)
+		//    self.session?.disconnect()
+		//    #else
+		self.session?.close()
+		//    #endif
+
+		self.isConnected = false
+		self.isReconnecting = false
+
+		self.sword.log("Stopping gateway connection...")
+	}
 
 }

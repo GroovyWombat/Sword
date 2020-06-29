@@ -2,30 +2,48 @@
   "object": {
     "pins": [
       {
-        "package": "SSCommonCrypto",
-        "repositoryURL": "https://github.com/Azoy/common-crypto-spm.git",
+        "package": "swift-log",
+        "repositoryURL": "https://github.com/apple/swift-log.git",
         "state": {
-          "branch": null,
-          "revision": "7e9904a0d0c0024a86ab6fe5698ffc8f7799efb4",
-          "version": "1.2.0"
+          "branch": "master",
+          "revision": "afc50b29deb6aeba7120d90559bc75d7548f9f86",
+          "version": null
         }
       },
       {
-        "package": "Starscream",
-        "repositoryURL": "https://github.com/Azoy/Starscream.git",
+        "package": "swift-nio",
+        "repositoryURL": "https://github.com/apple/swift-nio.git",
         "state": {
           "branch": null,
-          "revision": "a21fca8e9dc83cf3a88a3ba9be15ff17a7e4e8d6",
-          "version": "3.0.5"
+          "revision": "120acb15c39aa3217e9888e515de160378fbcc1e",
+          "version": "2.18.0"
         }
       },
       {
-        "package": "SSCZLib",
-        "repositoryURL": "https://github.com/Azoy/zlib-spm.git",
+        "package": "swift-nio-extras",
+        "repositoryURL": "https://github.com/apple/swift-nio-extras.git",
         "state": {
           "branch": null,
-          "revision": "f92fc0658af4cd9b11f233e9c02786ecbf75f1ee",
-          "version": "1.2.0"
+          "revision": "7cd24c0efcf9700033f671b6a8eaa64a77dd0b72",
+          "version": "1.5.1"
+        }
+      },
+      {
+        "package": "swift-nio-http2",
+        "repositoryURL": "https://github.com/apple/swift-nio-http2.git",
+        "state": {
+          "branch": null,
+          "revision": "c5d10f4165128c3d0cc0e3c0f0a8ef55947a73a6",
+          "version": "1.12.2"
+        }
+      },
+      {
+        "package": "swift-nio-ssl",
+        "repositoryURL": "https://github.com/apple/swift-nio-ssl.git",
+        "state": {
+          "branch": null,
+          "revision": "f0b118d9af6c4e78bc4f3f4fbb464020172b0bf4",
+          "version": "2.7.5"
         }
       }
     ]
