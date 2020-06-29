@@ -78,8 +78,9 @@ extension Gateway {
 //
 //    self.session?.connect()
 //    #else
-	let client = HTTPClient(configuration: .init(tlsConfig:.clientDefault), on: self.eventLoopGroup)
+	let client = HTTPClient(configuration: .init(tlsConfig:.some(.clientDefault)), on: self.eventLoopGroup)
 	var req = HTTPRequest(url: self.gatewayUrl)
+
 	req.isKeepAlive = true
 	
 	req.webSocketUpgrade(onUpgrade:  { [unowned self](ws: WebSocket) in

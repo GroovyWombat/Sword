@@ -46,7 +46,10 @@ extension Sword {
       route += ".delete"
     }
 
-    var urlString = "https://discordapp.com/api/v7\(endpointInfo.url)"
+//    var urlString = "https://discordapp.com/api/v7\(endpointInfo.url)"
+	var urlString = "https://gateway.discord.gg\(endpointInfo.url)?encoding=json&v=6"
+	#warning("TODO: remove print(_)")
+	print("Access to \(urlString)")
 
     if let params = params {
       urlString += "?"
@@ -82,7 +85,7 @@ extension Sword {
     }
 
     request.addValue(
-      "DiscordBot (https://github.com/Azoy/Sword, 0.9.0)",
+      "DiscordBot (https://github.com/GroovyWombat/Sword, 0.9.0)",
       forHTTPHeaderField: "User-Agent"
     )
 
@@ -208,7 +211,7 @@ extension Sword {
           sema.signal()
           return
         }
-
+		print(response.statusCode)
         completion(nil, RequestError(response.statusCode, returnedData!))
         sema.signal()
         return
